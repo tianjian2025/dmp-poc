@@ -229,7 +229,15 @@
 						"referenceName": "PL_CHILD_Transform_And_Curate",
 						"type": "PipelineReference"
 					},
-					"waitOnCompletion": true
+					"waitOnCompletion": true,
+					"parameters": {
+						"pRunId": "@variables('vRunId')",
+						"pRunDate": "@pipeline().parameters.pRunDate",
+						"pBatchSize": {
+							"value": "@pipeline().parameters.pBatchSize",
+							"type": "Expression"
+						}
+					}
 				}
 			},
 			{
@@ -248,25 +256,11 @@
 				},
 				"userProperties": [],
 				"typeProperties": {
-					"waitOnCompletion": true,
-					"parameters": {
-						"pRunId": {
-							"value": "@variables('vRunId')",
-							"type": "Expression"
-						},
-						"pRunDate": {
-							"value": "@pipeline().parameters.pRunDate",
-							"type": "Expression"
-						},
-						"pTargetSystems": {
-							"value": "@pipeline().parameters.pTargetSystems",
-							"type": "Expression"
-						},
-						"pMaxRetryMinutes": {
-							"value": "@pipeline().parameters.pMaxRetryMinutes",
-							"type": "Expression"
-						}
-					}
+					"pipeline": {
+						"referenceName": "PL_CHILD_Publish_Fanout",
+						"type": "PipelineReference"
+					},
+					"waitOnCompletion": true
 				}
 			},
 			{
