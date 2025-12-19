@@ -1,6 +1,159 @@
 {
-	"name": "pipeline1",
+	"name": "PL_CHILD_Extract_And_Stage",
 	"properties": {
+		"description": "Child 1: Extract and stage. Exercises: IfCondition, Copy, Validation, SqlServerStoredProcedure.",
+		"activities": [
+			{
+				"name": "If_FullLoad",
+				"type": "IfCondition",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@pipeline().parameters.pFullLoad",
+						"type": "Expression"
+					},
+					"ifTrueActivities": [
+						{
+							"name": "SP_Stage_Prepare_Full",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [],
+							"policy": {
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[dbo].[usp_poc_stage_prepare]"
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "Copy_SQL_to_Blob_ServiceSignal",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "If_FullLoad",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "SqlSource",
+						"sqlReaderQuery": {
+							"value": "@if(pipeline().parameters.pFullLoad, 'SELECT * FROM dbo.service_signal_stg', concat('SELECT * FROM dbo.service_signal_stg WHERE signal_ts > ''', pipeline().parameters.pWatermark, ''''))",
+							"type": "Expression"
+						},
+						"partitionOption": "None"
+					},
+					"sink": {
+						"type": "DelimitedTextSink"
+					},
+					"enableStaging": false
+				}
+			},
+			{
+				"name": "Copy_PG_to_Blob_DealerFeedback",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "Copy_SQL_to_Blob_ServiceSignal",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "PostgreSqlSource",
+						"query": "SELECT * FROM public.dealer_feedback"
+					},
+					"sink": {
+						"type": "DelimitedTextSink"
+					},
+					"enableStaging": false
+				}
+			},
+			{
+				"name": "Validation_Landing_Files",
+				"type": "Validation",
+				"dependsOn": [
+					{
+						"activity": "Copy_PG_to_Blob_DealerFeedback",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"timeout": "00:05:00",
+					"sleep": 10
+				}
+			},
+			{
+				"name": "Copy_Blob_to_Hive_Staging_ServiceSignal",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "Validation_Landing_Files",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "DelimitedTextSource"
+					},
+					"sink": {
+						"type": "HiveSink"
+					},
+					"enableStaging": false
+				}
+			}
+		],
+		"parameters": {
+			"pRunId": {
+				"type": "String"
+			},
+			"pRunDate": {
+				"type": "String"
+			},
+			"pFullLoad": {
+				"type": "Bool"
+			},
+			"pWatermark": {
+				"type": "String"
+			}
+		},
 		"annotations": []
 	}
 }

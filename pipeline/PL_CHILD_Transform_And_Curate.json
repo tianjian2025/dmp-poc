@@ -1,0 +1,150 @@
+{
+	"name": "PL_CHILD_Transform_And_Curate",
+	"properties": {
+		"description": "Child 2: Databricks transform + quality JAR. Exercises: DatabricksNotebook, DatabricksSparkJar, Copy, Validation, SetVariable.",
+		"activities": [
+			{
+				"name": "DBX_Notebook_Transform",
+				"type": "DatabricksNotebook",
+				"dependsOn": [],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Shared/poc/after_sales_transform",
+					"baseParameters": {
+						"runDate": {
+							"value": "@pipeline().parameters.pRunDate",
+							"type": "Expression"
+						},
+						"runId": {
+							"value": "@pipeline().parameters.pRunId",
+							"type": "Expression"
+						},
+						"batchSize": {
+							"value": "@string(pipeline().parameters.pBatchSize)",
+							"type": "Expression"
+						}
+					}
+				}
+			},
+			{
+				"name": "DBX_SparkJar_Quality",
+				"type": "DatabricksSparkJar",
+				"dependsOn": [
+					{
+						"activity": "DBX_Notebook_Transform",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"mainClassName": "com.company.poc.QualityJob",
+					"parameters": [
+						"--runDate",
+						"@pipeline().parameters.pRunDate",
+						"--runId",
+						"@pipeline().parameters.pRunId"
+					],
+					"jarFilePath": "dbfs:/FileStore/jars/poc-quality.jar"
+				}
+			},
+			{
+				"name": "Copy_Hive_to_SQL_LeadMart",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "DBX_SparkJar_Quality",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "HiveSource"
+					},
+					"sink": {
+						"type": "SqlSink"
+					},
+					"enableStaging": false
+				}
+			},
+			{
+				"name": "Validation_LeadMart_NotEmpty",
+				"type": "Validation",
+				"dependsOn": [
+					{
+						"activity": "Copy_Hive_to_SQL_LeadMart",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"timeout": "00:05:00",
+					"sleep": 10,
+					"minimumRows": 1
+				}
+			},
+			{
+				"name": "Set_vLocalRowCounts",
+				"type": "SetVariable",
+				"dependsOn": [
+					{
+						"activity": "Validation_LeadMart_NotEmpty",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "vLocalRowCounts",
+					"value": "{\"lead_fact\":\"REPLACE_WITH_COUNT\",\"lead_mart\":\"REPLACE_WITH_COUNT\"}"
+				}
+			}
+		],
+		"parameters": {
+			"pRunId": {
+				"type": "String"
+			},
+			"pRunDate": {
+				"type": "String"
+			},
+			"pBatchSize": {
+				"type": "Int"
+			}
+		},
+		"variables": {
+			"vLocalRowCounts": {
+				"type": "String"
+			}
+		},
+		"annotations": []
+	}
+}
