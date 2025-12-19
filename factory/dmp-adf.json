@@ -1,0 +1,9 @@
+{
+	"name": "dmp-adf",
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "586ab836-a506-40b7-a980-34f471e180bc",
+		"tenantId": "3a9ec3f2-ad58-4039-9a91-aeaaab3d72a4"
+	}
+}
