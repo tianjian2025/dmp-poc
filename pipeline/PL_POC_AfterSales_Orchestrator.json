@@ -260,7 +260,13 @@
 						"referenceName": "PL_CHILD_Publish_Fanout",
 						"type": "PipelineReference"
 					},
-					"waitOnCompletion": true
+					"waitOnCompletion": true,
+					"parameters": {
+						"pRunId": "@variables('vRunId')",
+						"pRunDate": "@pipeline().parameters.pRunDate",
+						"pTargetSystems": "@pipeline().parameters.pTargetSystems",
+						"pMaxRetryMinutes": "@pipeline().parameters.pMaxRetryMinutes"
+					}
 				}
 			},
 			{
