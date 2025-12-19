@@ -1,6 +1,219 @@
 {
 	"name": "PL_CHILD_Publish_Fanout",
 	"properties": {
+		"description": "Child 3: Fan-out publish 1→many. Exercises: Lookup, ForEach, IfCondition, Copy, Until, WebActivity, Wait, Delete, Validation.",
+		"activities": [
+			{
+				"name": "ForEach_Targets",
+				"type": "ForEach",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('Lookup_Targets_From_Param').output.value",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "If_Target_PG",
+							"type": "IfCondition",
+							"dependsOn": [],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@equals(item(),'PG')",
+									"type": "Expression"
+								},
+								"ifTrueActivities": [
+									{
+										"name": "Copy_To_Postgres_Queue",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "SqlSource",
+												"sqlReaderQuery": "SELECT * FROM dbo.lead_mart",
+												"partitionOption": "None"
+											},
+											"sink": {
+												"type": "PostgreSqlSink"
+											},
+											"enableStaging": false
+										}
+									}
+								]
+							}
+						},
+						{
+							"name": "If_Target_BLOB",
+							"type": "IfCondition",
+							"dependsOn": [
+								{
+									"activity": "If_Target_PG",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@equals(item(),'BLOB')",
+									"type": "Expression"
+								},
+								"ifTrueActivities": [
+									{
+										"name": "Copy_To_Blob_Curated",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "HiveSource"
+											},
+											"sink": {
+												"type": "DelimitedTextSink"
+											},
+											"enableStaging": false
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "Until_Dispatch_Complete",
+				"type": "Until",
+				"dependsOn": [
+					{
+						"activity": "ForEach_Targets",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@or(equals(variables('vDummyDone'), true), greaterOrEquals(div(sub(ticks(utcNow()), ticks(pipeline().RunId)), 600000000), pipeline().parameters.pMaxRetryMinutes))",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "Web_Dispatch_Status",
+							"type": "WebActivity",
+							"dependsOn": [],
+							"policy": {
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"method": "GET",
+								"url": {
+									"value": "@concat('https://REPLACE-ME/poc/dispatch/status?runId=', pipeline().parameters.pRunId)",
+									"type": "Expression"
+								}
+							}
+						},
+						{
+							"name": "Wait_30s",
+							"type": "Wait",
+							"dependsOn": [
+								{
+									"activity": "Web_Dispatch_Status",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"waitTimeInSeconds": 30
+							}
+						}
+					],
+					"timeout": "00:30:00"
+				}
+			},
+			{
+				"name": "Delete_Landing_Folder_Housekeeping",
+				"type": "Delete",
+				"dependsOn": [
+					{
+						"activity": "Until_Dispatch_Complete",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"enableLogging": true,
+					"recursive": true
+				}
+			},
+			{
+				"name": "Validation_Curated_File_Exists",
+				"type": "Validation",
+				"dependsOn": [
+					{
+						"activity": "Delete_Landing_Folder_Housekeeping",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"timeout": "00:05:00",
+					"sleep": 10
+				}
+			}
+		],
+		"parameters": {
+			"pRunId": {
+				"type": "String"
+			},
+			"pRunDate": {
+				"type": "String"
+			},
+			"pTargetSystems": {
+				"type": "String"
+			},
+			"pMaxRetryMinutes": {
+				"type": "Int"
+			}
+		},
+		"variables": {
+			"vDummyDone": {
+				"type": "Bool",
+				"defaultValue": "false"
+			}
+		},
 		"annotations": []
 	}
 }
