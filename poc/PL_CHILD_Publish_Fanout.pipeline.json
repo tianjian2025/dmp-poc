@@ -1,0 +1,240 @@
+{
+  "name": "PL_CHILD_Publish_Fanout",
+  "properties": {
+    "description": "Child 3: Fan-out publish 1→many. Exercises: Lookup, ForEach, IfCondition, Copy, Until, WebActivity, Wait, Delete, Validation.",
+    "parameters": {
+      "pRunId": {
+        "type": "String"
+      },
+      "pRunDate": {
+        "type": "String"
+      },
+      "pTargetSystems": {
+        "type": "String"
+      },
+      "pMaxRetryMinutes": {
+        "type": "Int"
+      }
+    },
+    "activities": [
+      {
+        "name": "Lookup_Targets_From_Param",
+        "type": "Lookup",
+        "dependsOn": [],
+        "typeProperties": {
+          "source": {
+            "type": "InlineSource",
+            "value": {
+              "value": "@split(replace(pipeline().parameters.pTargetSystems,' ',''),',')",
+              "type": "Expression"
+            }
+          },
+          "firstRowOnly": false
+        }
+      },
+      {
+        "name": "ForEach_Targets",
+        "type": "ForEach",
+        "dependsOn": [
+          {
+            "activity": "Lookup_Targets_From_Param",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "items": {
+            "value": "@activity('Lookup_Targets_From_Param').output.value",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "If_Target_PG",
+              "type": "IfCondition",
+              "typeProperties": {
+                "expression": {
+                  "value": "@equals(item(),'PG')",
+                  "type": "Expression"
+                },
+                "ifTrueActivities": [
+                  {
+                    "name": "Copy_To_Postgres_Queue",
+                    "type": "Copy",
+                    "typeProperties": {
+                      "source": {
+                        "type": "SqlSource",
+                        "sqlReaderQuery": "SELECT * FROM dbo.lead_mart"
+                      },
+                      "sink": {
+                        "type": "PostgreSqlSink"
+                      }
+                    },
+                    "inputs": [
+                      {
+                        "referenceName": "DS_SQL_LeadMart",
+                        "type": "DatasetReference"
+                      }
+                    ],
+                    "outputs": [
+                      {
+                        "referenceName": "DS_PG_LeadDispatchQueue",
+                        "type": "DatasetReference"
+                      }
+                    ]
+                  }
+                ],
+                "ifFalseActivities": []
+              }
+            },
+            {
+              "name": "If_Target_BLOB",
+              "type": "IfCondition",
+              "dependsOn": [
+                {
+                  "activity": "If_Target_PG",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "typeProperties": {
+                "expression": {
+                  "value": "@equals(item(),'BLOB')",
+                  "type": "Expression"
+                },
+                "ifTrueActivities": [
+                  {
+                    "name": "Copy_To_Blob_Curated",
+                    "type": "Copy",
+                    "typeProperties": {
+                      "source": {
+                        "type": "HiveSource"
+                      },
+                      "sink": {
+                        "type": "DelimitedTextSink"
+                      }
+                    },
+                    "inputs": [
+                      {
+                        "referenceName": "DS_HIVE_LeadFact",
+                        "type": "DatasetReference"
+                      }
+                    ],
+                    "outputs": [
+                      {
+                        "referenceName": "DS_BLOB_CuratedLeadFile",
+                        "type": "DatasetReference",
+                        "parameters": {
+                          "pRunDate": "@pipeline().parameters.pRunDate"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "ifFalseActivities": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "Until_Dispatch_Complete",
+        "type": "Until",
+        "dependsOn": [
+          {
+            "activity": "ForEach_Targets",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@or(equals(variables('vDummyDone'), true), greaterOrEquals(div(sub(ticks(utcNow()), ticks(pipeline().RunId)), 600000000), pipeline().parameters.pMaxRetryMinutes))",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "Web_Dispatch_Status",
+              "type": "WebActivity",
+              "typeProperties": {
+                "url": "@concat('https://REPLACE-ME/poc/dispatch/status?runId=', pipeline().parameters.pRunId)",
+                "method": "GET"
+              }
+            },
+            {
+              "name": "Wait_30s",
+              "type": "Wait",
+              "dependsOn": [
+                {
+                  "activity": "Web_Dispatch_Status",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "typeProperties": {
+                "waitTimeInSeconds": 30
+              }
+            }
+          ],
+          "timeout": "00:30:00"
+        }
+      },
+      {
+        "name": "Delete_Landing_Folder_Housekeeping",
+        "type": "Delete",
+        "dependsOn": [
+          {
+            "activity": "Until_Dispatch_Complete",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "DS_BLOB_LandingFolder",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          },
+          "recursive": true,
+          "enableLogging": true
+        }
+      },
+      {
+        "name": "Validation_Curated_File_Exists",
+        "type": "Validation",
+        "dependsOn": [
+          {
+            "activity": "Delete_Landing_Folder_Housekeeping",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "timeout": "00:05:00",
+          "dataset": {
+            "referenceName": "DS_BLOB_CuratedLeadFile",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          },
+          "sleep": 10,
+          "minimumSize": 1
+        }
+      }
+    ],
+    "variables": {
+      "vDummyDone": {
+        "type": "Bool",
+        "defaultValue": false
+      }
+    }
+  }
+}

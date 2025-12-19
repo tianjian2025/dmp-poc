@@ -1,0 +1,136 @@
+{
+  "name": "PL_CHILD_Transform_And_Curate",
+  "properties": {
+    "description": "Child 2: Databricks transform + quality JAR. Exercises: DatabricksNotebook, DatabricksSparkJar, Copy, Validation, SetVariable.",
+    "parameters": {
+      "pRunId": {
+        "type": "String"
+      },
+      "pRunDate": {
+        "type": "String"
+      },
+      "pBatchSize": {
+        "type": "Int"
+      }
+    },
+    "variables": {
+      "vLocalRowCounts": {
+        "type": "String"
+      }
+    },
+    "activities": [
+      {
+        "name": "DBX_Notebook_Transform",
+        "type": "DatabricksNotebook",
+        "dependsOn": [],
+        "linkedServiceName": {
+          "referenceName": "LS_Databricks",
+          "type": "LinkedServiceReference"
+        },
+        "typeProperties": {
+          "notebookPath": "/Shared/poc/after_sales_transform",
+          "baseParameters": {
+            "runDate": "@pipeline().parameters.pRunDate",
+            "runId": "@pipeline().parameters.pRunId",
+            "batchSize": "@string(pipeline().parameters.pBatchSize)"
+          }
+        }
+      },
+      {
+        "name": "DBX_SparkJar_Quality",
+        "type": "DatabricksSparkJar",
+        "dependsOn": [
+          {
+            "activity": "DBX_Notebook_Transform",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "linkedServiceName": {
+          "referenceName": "LS_Databricks",
+          "type": "LinkedServiceReference"
+        },
+        "typeProperties": {
+          "mainClassName": "com.company.poc.QualityJob",
+          "jarFilePath": "dbfs:/FileStore/jars/poc-quality.jar",
+          "parameters": [
+            "--runDate",
+            "@pipeline().parameters.pRunDate",
+            "--runId",
+            "@pipeline().parameters.pRunId"
+          ]
+        }
+      },
+      {
+        "name": "Copy_Hive_to_SQL_LeadMart",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "DBX_SparkJar_Quality",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "HiveSource"
+          },
+          "sink": {
+            "type": "SqlSink"
+          }
+        },
+        "inputs": [
+          {
+            "referenceName": "DS_HIVE_LeadFact",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "DS_SQL_LeadMart",
+            "type": "DatasetReference"
+          }
+        ]
+      },
+      {
+        "name": "Validation_LeadMart_NotEmpty",
+        "type": "Validation",
+        "dependsOn": [
+          {
+            "activity": "Copy_Hive_to_SQL_LeadMart",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "timeout": "00:05:00",
+          "dataset": {
+            "referenceName": "DS_SQL_LeadMart",
+            "type": "DatasetReference"
+          },
+          "sleep": 10,
+          "minimumRows": 1
+        }
+      },
+      {
+        "name": "Set_vLocalRowCounts",
+        "type": "SetVariable",
+        "dependsOn": [
+          {
+            "activity": "Validation_LeadMart_NotEmpty",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "variableName": "vLocalRowCounts",
+          "value": "{\"lead_fact\":\"REPLACE_WITH_COUNT\",\"lead_mart\":\"REPLACE_WITH_COUNT\"}"
+        }
+      }
+    ]
+  }
+}

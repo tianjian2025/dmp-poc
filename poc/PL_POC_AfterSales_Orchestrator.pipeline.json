@@ -1,0 +1,348 @@
+{
+  "name": "PL_POC_AfterSales_Orchestrator",
+  "properties": {
+    "description": "Parent orchestrator for After-Sales PoC. Exercises: WebActivity, Wait, Lookup, SetVariable, GetMetadata, IfCondition, Delete, ExecutePipeline, Validation, SqlServerStoredProcedure.",
+    "parameters": {
+      "pRunDate": {
+        "type": "String",
+        "defaultValue": "@utcNow()"
+      },
+      "pFullLoad": {
+        "type": "Bool",
+        "defaultValue": false
+      },
+      "pBatchSize": {
+        "type": "Int",
+        "defaultValue": 5000
+      },
+      "pMaxRetryMinutes": {
+        "type": "Int",
+        "defaultValue": 15
+      },
+      "pTargetSystems": {
+        "type": "String",
+        "defaultValue": "SQL,PG,HIVE,BLOB"
+      }
+    },
+    "variables": {
+      "vRunId": {
+        "type": "String"
+      },
+      "vWatermark": {
+        "type": "String"
+      },
+      "vRowCounts": {
+        "type": "String"
+      },
+      "vContinue": {
+        "type": "Bool"
+      }
+    },
+    "activities": [
+      {
+        "name": "Set_vRunId",
+        "type": "SetVariable",
+        "dependsOn": [],
+        "userProperties": [],
+        "typeProperties": {
+          "variableName": "vRunId",
+          "value": "@guid()"
+        }
+      },
+      {
+        "name": "Web_Start_Callback",
+        "type": "WebActivity",
+        "dependsOn": [
+          {
+            "activity": "Set_vRunId",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "url": "https://REPLACE-ME/poc/start",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "runId": "@variables('vRunId')",
+            "runDate": "@pipeline().parameters.pRunDate",
+            "fullLoad": "@pipeline().parameters.pFullLoad"
+          }
+        }
+      },
+      {
+        "name": "Wait_10s",
+        "type": "Wait",
+        "dependsOn": [
+          {
+            "activity": "Web_Start_Callback",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "waitTimeInSeconds": 10
+        }
+      },
+      {
+        "name": "Lookup_Watermark",
+        "type": "Lookup",
+        "dependsOn": [
+          {
+            "activity": "Wait_10s",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "SqlSource",
+            "sqlReaderQuery": "SELECT last_success_ts FROM dbo.poc_control_watermark WHERE source_name='service_signal'"
+          },
+          "dataset": {
+            "referenceName": "DS_SQL_PocControl",
+            "type": "DatasetReference"
+          },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "Set_vWatermark",
+        "type": "SetVariable",
+        "dependsOn": [
+          {
+            "activity": "Lookup_Watermark",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "variableName": "vWatermark",
+          "value": "@string(activity('Lookup_Watermark').output.firstRow.last_success_ts)"
+        }
+      },
+      {
+        "name": "GetMetadata_LandingFolder",
+        "type": "GetMetadata",
+        "dependsOn": [
+          {
+            "activity": "Set_vWatermark",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "DS_BLOB_LandingFolder",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          },
+          "fieldList": [
+            "exists",
+            "childItems"
+          ]
+        }
+      },
+      {
+        "name": "If_Landing_Exists_Delete",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "GetMetadata_LandingFolder",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('GetMetadata_LandingFolder').output.exists, true)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "Delete_Landing_Contents",
+              "type": "Delete",
+              "typeProperties": {
+                "dataset": {
+                  "referenceName": "DS_BLOB_LandingFolder",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "pRunDate": "@pipeline().parameters.pRunDate"
+                  }
+                },
+                "enableLogging": true,
+                "recursive": true
+              }
+            }
+          ],
+          "ifFalseActivities": []
+        }
+      },
+      {
+        "name": "Execute_CHILD_Extract_And_Stage",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "If_Landing_Exists_Delete",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "PL_CHILD_Extract_And_Stage",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "pRunId": "@variables('vRunId')",
+            "pRunDate": "@pipeline().parameters.pRunDate",
+            "pFullLoad": "@pipeline().parameters.pFullLoad",
+            "pWatermark": "@variables('vWatermark')"
+          }
+        }
+      },
+      {
+        "name": "Execute_CHILD_Transform_And_Curate",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "Execute_CHILD_Extract_And_Stage",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "PL_CHILD_Transform_And_Curate",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "pRunId": "@variables('vRunId')",
+            "pRunDate": "@pipeline().parameters.pRunDate",
+            "pBatchSize": "@pipeline().parameters.pBatchSize"
+          }
+        }
+      },
+      {
+        "name": "Execute_CHILD_Publish_Fanout",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "Execute_CHILD_Transform_And_Curate",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "PL_CHILD_Publish_Fanout",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "pRunId": "@variables('vRunId')",
+            "pRunDate": "@pipeline().parameters.pRunDate",
+            "pTargetSystems": "@pipeline().parameters.pTargetSystems",
+            "pMaxRetryMinutes": "@pipeline().parameters.pMaxRetryMinutes"
+          }
+        }
+      },
+      {
+        "name": "Validation_Curated_Exists",
+        "type": "Validation",
+        "dependsOn": [
+          {
+            "activity": "Execute_CHILD_Publish_Fanout",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "timeout": "00:05:00",
+          "dataset": {
+            "referenceName": "DS_BLOB_CuratedLeadFile",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          },
+          "sleep": 10,
+          "minimumSize": 1
+        }
+      },
+      {
+        "name": "Web_End_Callback",
+        "type": "WebActivity",
+        "dependsOn": [
+          {
+            "activity": "Validation_Curated_Exists",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "url": "https://REPLACE-ME/poc/end",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "runId": "@variables('vRunId')",
+            "status": "Succeeded",
+            "rowCounts": "@variables('vRowCounts')"
+          }
+        }
+      },
+      {
+        "name": "SP_Audit_Finalize",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          {
+            "activity": "Web_End_Callback",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "storedProcedureName": "[dbo].[usp_poc_audit_finalize]",
+          "storedProcedureParameters": {
+            "run_id": {
+              "value": "@variables('vRunId')",
+              "type": "String"
+            },
+            "run_date": {
+              "value": "@pipeline().parameters.pRunDate",
+              "type": "String"
+            },
+            "status": {
+              "value": "Succeeded",
+              "type": "String"
+            }
+          }
+        },
+        "linkedServiceName": {
+          "referenceName": "LS_SQL_Server",
+          "type": "LinkedServiceReference"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "name": "PL_CHILD_Extract_And_Stage",
+  "properties": {
+    "description": "Child 1: Extract and stage. Exercises: IfCondition, Copy, Validation, SqlServerStoredProcedure.",
+    "parameters": {
+      "pRunId": {
+        "type": "String"
+      },
+      "pRunDate": {
+        "type": "String"
+      },
+      "pFullLoad": {
+        "type": "Bool"
+      },
+      "pWatermark": {
+        "type": "String"
+      }
+    },
+    "activities": [
+      {
+        "name": "If_FullLoad",
+        "type": "IfCondition",
+        "dependsOn": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@pipeline().parameters.pFullLoad",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "SP_Stage_Prepare_Full",
+              "type": "SqlServerStoredProcedure",
+              "typeProperties": {
+                "storedProcedureName": "[dbo].[usp_poc_stage_prepare]"
+              },
+              "linkedServiceName": {
+                "referenceName": "LS_SQL_Server",
+                "type": "LinkedServiceReference"
+              }
+            }
+          ],
+          "ifFalseActivities": []
+        }
+      },
+      {
+        "name": "Copy_SQL_to_Blob_ServiceSignal",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "If_FullLoad",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "SqlSource",
+            "sqlReaderQuery": {
+              "value": "@if(pipeline().parameters.pFullLoad, 'SELECT * FROM dbo.service_signal_stg', concat('SELECT * FROM dbo.service_signal_stg WHERE signal_ts > ''', pipeline().parameters.pWatermark, ''''))",
+              "type": "Expression"
+            }
+          },
+          "sink": {
+            "type": "DelimitedTextSink"
+          },
+          "enableStaging": false
+        },
+        "inputs": [
+          {
+            "referenceName": "DS_SQL_ServiceSignal",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "DS_BLOB_Landing_ServiceSignal",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Copy_PG_to_Blob_DealerFeedback",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "Copy_SQL_to_Blob_ServiceSignal",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "PostgreSqlSource",
+            "query": "SELECT * FROM public.dealer_feedback"
+          },
+          "sink": {
+            "type": "DelimitedTextSink"
+          },
+          "enableStaging": false
+        },
+        "inputs": [
+          {
+            "referenceName": "DS_PG_DealerFeedback",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "DS_BLOB_Landing_DealerFeedback",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Validation_Landing_Files",
+        "type": "Validation",
+        "dependsOn": [
+          {
+            "activity": "Copy_PG_to_Blob_DealerFeedback",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "timeout": "00:05:00",
+          "dataset": {
+            "referenceName": "DS_BLOB_Landing_ServiceSignal",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          },
+          "sleep": 10,
+          "minimumSize": 1
+        }
+      },
+      {
+        "name": "Copy_Blob_to_Hive_Staging_ServiceSignal",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "Validation_Landing_Files",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource"
+          },
+          "sink": {
+            "type": "HiveSink"
+          }
+        },
+        "inputs": [
+          {
+            "referenceName": "DS_BLOB_Landing_ServiceSignal",
+            "type": "DatasetReference",
+            "parameters": {
+              "pRunDate": "@pipeline().parameters.pRunDate"
+            }
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "DS_HIVE_ServiceSignal_Stg",
+            "type": "DatasetReference"
+          }
+        ]
+      }
+    ]
+  }
+}
