@@ -7,7 +7,7 @@
 			"domain": "https://adb-7405609465943547.7.azuredatabricks.net",
 			"authentication": "MSI",
 			"workspaceResourceId": "/subscriptions/bb02c9aa-0bba-4087-8379-7cb7cff50a97/resourceGroups/DMP/providers/Microsoft.Databricks/workspaces/dmp_demo",
-			"existingClusterId": "https://adb-7405609465943547.7.azuredatabricks.net/compute/clusters/0120-155325-lheym39c?o=7405609465943547"
+			"existingClusterId": "0120-155325-lheym39c"
 		}
 	}
 }
